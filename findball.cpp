@@ -9,6 +9,9 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
+//using namespace cv;
+//using namespace std;
+
 #include <vector>
 #include <math.h>
 #include <findball/ball.h>
@@ -424,10 +427,10 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
         }
     }
     // Hough 圆
-    cv::vector<cv::Vec3f> circles;
+//    std::vector<cv::Vec3f> circles;
     //
-    cv::vector<cv::vector<cv::Point> > contours;
-    cv::vector<cv::Vec4i> hierarchy;
+    std::vector< std::vector<cv::Point> > contours;
+    std::vector<cv::Vec4i> hierarchy;
     cv::Mat imggray;
     // Convert to gray image - one channel only
 //    imggray = imgMat.clone();
@@ -441,11 +444,10 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     cv::findContours(imggray, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, cv::Point(0, 0));
     int num_hull;   // 找到的边缘的数量
     num_hull = (int)contours.size();
-    ROS_INFO("Number of contours: %d", (int)contours.size());
     // 对每一个轮廓计算其凸包
-    std::vector< std::vector<cv::Point> > hull(contours.size());
+    std::vector<std::vector<cv::Point> > hull(contours.size());
     // 遍历所有边缘，去除点数小于阈值的边缘
-    std::vector< std::vector<cv::Point> >::const_iterator itc = contours.begin();
+    std::vector<std::vector<cv::Point> >::iterator itc = contours.begin();        // 指向第一条边缘
     while(itc != contours.end())
     {
         if(itc->size() < MINSIZE)
@@ -462,7 +464,7 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
         cv::convexHull(cv::Mat(contours[i]), hull[i], false, true);
     }
     // 遍历所有凸包，去除点数小于阈值的凸包
-    std::vector< std::vector<cv::Point> >::const_iterator ith = hull.begin();
+    std::vector<std::vector<cv::Point> >::iterator ith = hull.begin();
     while(ith != hull.end())
     {
         if(ith->size() < MINSIZE)
@@ -474,13 +476,33 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
             ++ith;
         }
     }
+    cv::Mat drawing = cv::Mat::zeros(imggray.size(), CV_8UC3);  // 构造全零三通道矩阵
+    ROS_INFO("Number of contours: %d", (int)contours.size());
+    if(contours.size() == 0)
+    {
+        ROS_INFO("NO BALL FOUND");
+    }
+    else
+    {
+        ROS_INFO("%d BALL WAS FOUND", (int)contours.size());
+        for(int i = 0; i < contours.size(); i++)
+        {
+            float radius;
+            cv::Point2f center;
+            cv::minEnclosingCircle(cv::Mat(contours[i]), center, radius);
+            cv::Point center_point;
+            center_point = center;
+            cv::circle(drawing, center_point, static_cast<int>(radius), cv::Scalar(255, 255, 0), 1);
+            ROS_INFO("[finder]x = %f, y = %f, r = %f", center.x, center.y, radius);
+
+        }
+    }
 
 //    for(int i = 0; i < num_hull; i++)
 //    {
 //        // hull[i] 第 i 个凸包
 //    }
     // 绘出轮廓及其凸包
-    cv::Mat drawing = cv::Mat::zeros(imggray.size(), CV_8UC3);  // 构造全零三通道矩阵
     for(int i = 0; i < contours.size(); i++)
     {
         cv::Scalar color_contours = cv::Scalar(255, 0, 0);  // Blue
@@ -516,14 +538,6 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     out_msg.image = drawing;
     out_msg.encoding = sensor_msgs::image_encodings::BGR8; // sensor_msgs::image_encodings::BGR8 Mat 图片三通道 MONO8单通道灰度图
     sensor_msgs::Image grayimg = *out_msg.toImageMsg();
-    if(circles.size() == 0)
-    {
-        ROS_INFO("NO BALL FOUND");
-    }
-    else
-    {
-        ROS_INFO("%d BALL WAS FOUND", (int)circles.size());
-    }
 ////    image_tmp.publish(grayimg);
     return grayimg;
 }
