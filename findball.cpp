@@ -27,6 +27,7 @@
 #define HEIGHT 360
 
 #define MINSIZE  10
+#define MIN_BALLRATIO 0.3       // 球最小比率
 
 struct coor{int x,y;};//坐标
 struct circle{double x,y,r;};//圆
@@ -68,6 +69,8 @@ public:
     double w;
     void find(const sensor_msgs::Image& input,double &dx,double &dy,double &dRadius,int GoalColor=4*32);
     sensor_msgs::Image finder(const sensor_msgs::Image image);
+    // 统计在以center为圆心，radius为半径的圆的求颜色的占有率
+    double ball_ratio(const sensor_msgs::Image image, cv::Point2f center, float radius);
     ball();
 };
 
@@ -403,13 +406,36 @@ void ball::find(const sensor_msgs::Image& image,double &dx,double &dy,double &dR
 
 }
 
+double ball::ball_ratio(const sensor_msgs::Image image, cv::Point2f center, float radius)
+{
+    if(radius < 0.1)
+        return -1;
+    Height = image.height;
+    Width = image.width;
+    double ratio;
+    ratio = 0;
+    for(int h = int(center.y - radius); h <= int(center.y + radius); h++)
+    {
+        for(int w = int(center.x - radius); w <= int(center.x + radius); w++)
+        {
+            if(w < 0 || w >= Width || h < 0 || h >= Height)     // 超出图像边界
+                continue;
+            if((h-center.y)*(h-center.y)+(w-center.x)*(w-center.x) > radius*radius) // 在圆外
+                continue;
+            if(image.data[(h+1)*Width + (w+1)] == COLOR_Orange)
+            {
+                ratio += 1;
+            }
+        }
+    }
+    return (ratio*2.0/CV_PI/radius/radius);
+}
+
 sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
 {
     /// opencv Mat format image imgMat
     ROS_INFO("ball finder");
     cv::Mat imgMat;
-    int Height;
-    int Width;
     Height = image.height;
     Width = image.width;
     imgMat = cv::Mat(Height, Width, CV_8UC3, cv::Scalar(3));
@@ -438,7 +464,7 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     // 模糊处理 -> 降噪
 //    cv::blur(imggray, imggray, cv::Size(5, 5));
     // 高斯模糊去噪
-    cv::GaussianBlur(imggray, imggray, cv::Size(5, 5), 2, 2);
+//    cv::GaussianBlur(imggray, imggray, cv::Size(5, 5), 2, 2);
 //    cv::GaussianBlur(imggray, imggray, cv::Size(6, 6), 0, 0);
     // 寻找边缘
     cv::findContours(imggray, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, cv::Point(0, 0));
@@ -464,19 +490,21 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
         cv::convexHull(cv::Mat(contours[i]), hull[i], false, true);
     }
     // 遍历所有凸包，去除点数小于阈值的凸包
-    std::vector<std::vector<cv::Point> >::iterator ith = hull.begin();
-    while(ith != hull.end())
-    {
-        if(ith->size() < MINSIZE)
-        {
-            ith = hull.erase(ith);
-        }
-        else
-        {
-            ++ith;
-        }
-    }
-    cv::Mat drawing = cv::Mat::zeros(imggray.size(), CV_8UC3);  // 构造全零三通道矩阵
+//    std::vector<std::vector<cv::Point> >::iterator ith = hull.begin();
+//    while(ith != hull.end())
+//    {
+//        if(ith->size() < MINSIZE)
+//        {
+//            ith = hull.erase(ith);
+//            itc = contours.erase(itc);
+//        }
+//        else
+//        {
+//            ++ith;
+//            ++itc;
+//        }
+//    }
+//    cv::Mat drawing = cv::Mat::zeros(imggray.size(), CV_8UC3);  // 构造全零三通道矩阵
     ROS_INFO("Number of contours: %d", (int)contours.size());
     if(contours.size() == 0)
     {
@@ -484,19 +512,33 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     }
     else
     {
-        ROS_INFO("%d BALL WAS FOUND", (int)contours.size());
-        for(int i = 0; i < contours.size(); i++)
+        std::vector<std::vector<cv::Point> >::iterator itc = contours.begin();        // 指向第一条边缘
+        std::vector<std::vector<cv::Point> >::iterator ith = hull.begin(); ith = hull.begin();
+        while(itc != contours.end()/* i < contours.size()*/)
         {
             float radius;
             cv::Point2f center;
-            cv::minEnclosingCircle(cv::Mat(contours[i]), center, radius);
+            cv::minEnclosingCircle(cv::Mat(*itc/*contours[i]*/), center, radius);
             cv::Point center_point;
             center_point = center;
-            cv::circle(drawing, center_point, static_cast<int>(radius), cv::Scalar(255, 255, 0), 1);
-            ROS_INFO("[finder]x = %f, y = %f, r = %f", center.x, center.y, radius);
-
+            // 统计圆中黄色点（求颜色）的个数
+            double ratio = ball_ratio(image, center, radius);
+            if(ratio < 0)
+                break;
+            if(ratio < MIN_BALLRATIO)   // 球颜色的比率小于阈值，去除
+            {
+                itc = contours.erase(itc);
+                ith = hull.erase(ith);
+            }
+            else{
+                cv::circle(imgMat, center_point, static_cast<int>(radius), cv::Scalar(255, 255, 0), 2);
+                ROS_INFO("[finder]x = %f, y = %f, r = %f", center.x, center.y, radius);
+                ++itc;
+                ++ith;
+            }
         }
     }
+    ROS_INFO("%d BALL WAS FOUND", (int)contours.size());
 
 //    for(int i = 0; i < num_hull; i++)
 //    {
@@ -508,7 +550,7 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
         cv::Scalar color_contours = cv::Scalar(255, 0, 0);  // Blue
 //        cv::Scalar color_hull =  cv::Scalar(0, 0, 255);     // Red
         // 轮廓
-        cv::drawContours(drawing, contours, i, color_contours, 1, 8, cv::vector<cv::Vec4i>(), 0, cv::Point());
+        cv::drawContours(imgMat, contours, i, color_contours, 1, 8, cv::vector<cv::Vec4i>(), 0, cv::Point());
         // 凸包
 //        cv::drawContours(drawing, hull, i, color_hull, 1, 8, cv::vector<cv::Vec4i>(), 0, cv::Point());
     }
@@ -535,12 +577,14 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
 //////    imshow("grayed image", imgMat);
 
     cv_bridge::CvImage out_msg;
-    out_msg.image = drawing;
+    out_msg.image = imgMat;
     out_msg.encoding = sensor_msgs::image_encodings::BGR8; // sensor_msgs::image_encodings::BGR8 Mat 图片三通道 MONO8单通道灰度图
     sensor_msgs::Image grayimg = *out_msg.toImageMsg();
 ////    image_tmp.publish(grayimg);
     return grayimg;
 }
+
+
 
 
 //*****************************************************************************
