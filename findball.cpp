@@ -428,7 +428,7 @@ double ball::ball_ratio(const sensor_msgs::Image image, cv::Point2f center, floa
             }
         }
     }
-    return (ratio*2.0/CV_PI/radius/radius);
+    return (ratio*2.0/(CV_PI*radius*radius));
 }
 
 sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
@@ -438,18 +438,25 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     cv::Mat imgMat;
     Height = image.height;
     Width = image.width;
+//    cv_bridge::toCvCopy()
     imgMat = cv::Mat(Height, Width, CV_8UC3, cv::Scalar(3));
     for(int j = 1; j <= Height; j++)
     {
         for(int i = 1; i <= Width; i++)
         {
-            if(image.data[j * Width + i] == COLOR_Orange)
+            if(image.data[j * Width + i] == COLOR_Orange)       // 橙黄色 - 球
             {
                 imgMat.at<cv::Vec3b>(j-1, i-1)[0] = 255;
                 imgMat.at<cv::Vec3b>(j-1, i-1)[1] = 255;
                 imgMat.at<cv::Vec3b>(j-1, i-1)[2] = 255;
-
             }
+
+//            else if(image.data[j * Width + i] == COLOR_Black)
+//            {
+//                imgMat.at<cv::Vec3b>(j-1, i-1)[0] = 127;
+//                imgMat.at<cv::Vec3b>(j-1, i-1)[1] = 127;
+//                imgMat.at<cv::Vec3b>(j-1, i-1)[2] = 127;
+//            }
         }
     }
     // Hough 圆
@@ -476,7 +483,7 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
     std::vector<std::vector<cv::Point> >::iterator itc = contours.begin();        // 指向第一条边缘
     while(itc != contours.end())
     {
-        if(itc->size() < MINSIZE)
+        if(itc->size() < MINSIZE)       // 边缘所占据的节点数小于阈值
         {
             itc = contours.erase(itc);
         }
@@ -506,6 +513,16 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
 //    }
 //    cv::Mat drawing = cv::Mat::zeros(imggray.size(), CV_8UC3);  // 构造全零三通道矩阵
     ROS_INFO("Number of contours: %d", (int)contours.size());
+    cv_bridge::CvImagePtr cv_ptr;
+    try{
+        cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
+        imgMat =  cv_ptr->image;
+    }
+    catch (cv_bridge::Exception& ex)
+    {
+        ROS_ERROR("cv_bridge exception: %s", ex.what());
+        return image;
+    }
     if(contours.size() == 0)
     {
         ROS_INFO("NO BALL FOUND");
@@ -531,8 +548,8 @@ sensor_msgs::Image ball::finder(const sensor_msgs::Image image)
                 ith = hull.erase(ith);
             }
             else{
-                cv::circle(imgMat, center_point, static_cast<int>(radius), cv::Scalar(255, 255, 0), 2);
-                ROS_INFO("[finder]x = %f, y = %f, r = %f", center.x, center.y, radius);
+                cv::circle(imgMat, center_point, static_cast<int>(radius+4), cv::Scalar(255, 255, 0), 2);
+                ROS_INFO("[finder]x = %f, y = %f, r = %f", center.x, center.y, radius+4);
                 ++itc;
                 ++ith;
             }
@@ -607,7 +624,7 @@ public:
   ImageChanger()
     : it(nh)
   {
-      image_tmp = it.advertise("tmp", 1);       // temp image
+      image_tmp = it.advertise("new_out", 1);       // new out image
     image_pub = it.advertise("out", 1);        //for test*************
     image_sub = it.subscribe("image_color_classified", 1, &ImageChanger::image_change, this);//field_img//
     ROS_INFO("I receive image");
